@@ -143,6 +143,23 @@
         let translateX = 0;
         let translateY = 0;
         let rotation = 0;
+        
+        // Map switching functionality
+        const maps = {
+            '1': 'map.jpg',
+            '2': 'map2.jpg',
+            '3': 'map3.jpg'
+        };
+        let currentMap = '1';
+
+        function switchMap(mapKey) {
+            if (maps[mapKey]) {
+                currentMap = mapKey;
+                image.src = maps[mapKey];
+                miniMap.querySelector('img').src = maps[mapKey];
+                resetView();
+            }
+        }
 
         // Prevent default drag behaviors
         container.addEventListener('dragstart', (e) => e.preventDefault());
@@ -309,6 +326,11 @@
                 case 'M':
                     document.getElementById('toggle-mini-map').click();
                     break;
+                case '1':
+                case '2':
+                case '3':
+                    switchMap(e.key);
+                    break;
             }
             updateTransform();
         });
@@ -323,16 +345,6 @@
             image.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale}) rotate(${rotation}deg)`;
             zoomLevel.textContent = `${Math.round(scale * 100)}%`;
             updateMiniMap();
-            
-            // Save view state in URL
-            const state = {
-                x: translateX,
-                y: translateY,
-                s: scale,
-                r: rotation
-            };
-            const params = new URLSearchParams(state);
-            history.replaceState(null, '', `?${params.toString()}`);
         }
 
         // Update mini-map
@@ -367,16 +379,6 @@
             rotation = 0;
             updateTransform();
         }
-
-        // Load view state from URL
-        window.addEventListener('load', () => {
-            const params = new URLSearchParams(window.location.search);
-            if (params.has('x')) translateX = parseFloat(params.get('x'));
-            if (params.has('y')) translateY = parseFloat(params.get('y'));
-            if (params.has('s')) scale = parseFloat(params.get('s'));
-            if (params.has('r')) rotation = parseFloat(params.get('r'));
-            updateTransform();
-        });
 
         // Handle window resize
         window.addEventListener('resize', updateMiniMap);
