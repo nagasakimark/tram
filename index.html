@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Image Viewer</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #1a1a1a;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+        }
+        #container {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            user-select: none;
+        }
+        #image {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+            transform-origin: center;
+            cursor: grab;
+            -webkit-user-drag: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #image:active {
+            cursor: grabbing;
+        }
+        #modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        #qr-image {
+            max-width: 80%;
+            max-height: 80%;
+        }
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 8px;
+            display: flex;
+            gap: 10px;
+            z-index: 100;
+            backdrop-filter: blur(5px);
+        }
+        .controls button {
+            background: rgba(255, 255, 255, 0.1);
+            border: none;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.3s;
+        }
+        .controls button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        #zoom-level {
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        #mini-map {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 150px;
+            height: 150px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 8px;
+            overflow: hidden;
+            z-index: 100;
+        }
+        #mini-map img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            opacity: 0.7;
+        }
+        #viewport-indicator {
+            position: absolute;
+            border: 2px solid #fff;
+            background: rgba(255, 255, 255, 0.1);
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <img id="image" src="map.jpg" alt="Map" draggable="false">
+    </div>
+    <div id="modal">
+        <img id="qr-image" src="qr.png" alt="QR Code" draggable="false">
+    </div>
+    <div class="controls">
+        <button id="zoom-out" title="Zoom Out">−</button>
+        <span id="zoom-level">100%</span>
+        <button id="zoom-in" title="Zoom In">+</button>
+        <button id="reset" title="Reset View">↺</button>
+        <button id="fullscreen" title="Toggle Fullscreen">⤢</button>
+        <button id="toggle-mini-map" title="Toggle Mini-map">◱</button>
+        <button id="show-qr" title="Show QR Code">QR</button>
+    </div>
+    <div id="mini-map">
+        <img src="map.jpg" alt="Mini-map" draggable="false">
+        <div id="viewport-indicator"></div>
+    </div>
+
+    <script>
+        const container = document.getElementById('container');
+        const image = document.getElementById('image');
+        const modal = document.getElementById('modal');
+        const miniMap = document.getElementById('mini-map');
+        const viewportIndicator = document.getElementById('viewport-indicator');
+        const zoomLevel = document.getElementById('zoom-level');
+        let scale = 1;
+        let isPanning = false;
+        let startX, startY;
+        let translateX = 0;
+        let translateY = 0;
+        let rotation = 0;
+
+        // Prevent default drag behaviors
+        container.addEventListener('dragstart', (e) => e.preventDefault());
+
+        // Initialize UI controls
+        document.getElementById('zoom-in').addEventListener('click', () => {
+            scale = Math.min(scale * 1.2, 10);
+            updateTransform();
+        });
+
+        document.getElementById('zoom-out').addEventListener('click', () => {
+            scale = Math.max(scale / 1.2, 0.1);
+            updateTransform();
+        });
+
+        document.getElementById('reset').addEventListener('click', resetView);
+
+        document.getElementById('fullscreen').addEventListener('click', () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        document.getElementById('toggle-mini-map').addEventListener('click', () => {
+            miniMap.style.display = miniMap.style.display === 'none' ? 'block' : 'none';
+            updateMiniMap();
+        });
+
+        document.getElementById('show-qr').addEventListener('click', () => {
+            modal.style.display = 'flex';
+        });
+
+        // Zoom functionality
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = e.deltaY * -0.01;
+            const newScale = Math.min(Math.max(0.1, scale + delta), 10);
+            const mouseX = e.clientX;
+            const mouseY = e.clientY;
+            
+            const rect = image.getBoundingClientRect();
+            const x = mouseX - rect.left;
+            const y = mouseY - rect.top;
+            
+            translateX += x - (x * (newScale / scale));
+            translateY += y - (y * (newScale / scale));
+            
+            scale = newScale;
+            updateTransform();
+        });
+
+        // Pan functionality
+        container.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            isPanning = true;
+            startX = e.clientX - translateX;
+            startY = e.clientY - translateY;
+            image.style.cursor = 'grabbing';
+        });
+
+        container.addEventListener('mousemove', (e) => {
+            if (!isPanning) return;
+            e.preventDefault();
+            translateX = e.clientX - startX;
+            translateY = e.clientY - startY;
+            updateTransform();
+        });
+
+        container.addEventListener('mouseup', () => {
+            isPanning = false;
+            image.style.cursor = 'grab';
+        });
+
+        container.addEventListener('mouseleave', () => {
+            isPanning = false;
+            image.style.cursor = 'grab';
+        });
+
+        // Touch events
+        container.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 1) {
+                isPanning = true;
+                startX = e.touches[0].clientX - translateX;
+                startY = e.touches[0].clientY - translateY;
+            }
+        });
+
+        container.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            if (isPanning && e.touches.length === 1) {
+                translateX = e.touches[0].clientX - startX;
+                translateY = e.touches[0].clientY - startY;
+                updateTransform();
+            }
+        });
+
+        container.addEventListener('touchend', () => {
+            isPanning = false;
+        });
+
+        // Pinch to zoom
+        let initialDistance = 0;
+        let initialScale = 1;
+
+        container.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                initialDistance = getDistance(e.touches[0], e.touches[1]);
+                initialScale = scale;
+            }
+        });
+
+        container.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2) {
+                const distance = getDistance(e.touches[0], e.touches[1]);
+                scale = Math.min(Math.max(0.1, initialScale * (distance / initialDistance)), 10);
+                updateTransform();
+            }
+        });
+
+        function getDistance(touch1, touch2) {
+            return Math.hypot(
+                touch2.clientX - touch1.clientX,
+                touch2.clientY - touch1.clientY
+            );
+        }
+
+        // Keyboard controls
+        document.addEventListener('keydown', (e) => {
+            const STEP = 50;
+            const ZOOM_FACTOR = 1.1;
+
+            switch(e.key) {
+                case 'ArrowLeft':
+                    translateX += STEP;
+                    break;
+                case 'ArrowRight':
+                    translateX -= STEP;
+                    break;
+                case 'ArrowUp':
+                    translateY += STEP;
+                    break;
+                case 'ArrowDown':
+                    translateY -= STEP;
+                    break;
+                case '+':
+                case '=':
+                    scale = Math.min(scale * ZOOM_FACTOR, 10);
+                    break;
+                case '-':
+                case '_':
+                    scale = Math.max(scale / ZOOM_FACTOR, 0.1);
+                    break;
+                case 'r':
+                case 'R':
+                    resetView();
+                    break;
+                case 'f':
+                case 'F':
+                    document.getElementById('fullscreen').click();
+                    break;
+                case 'm':
+                case 'M':
+                    document.getElementById('toggle-mini-map').click();
+                    break;
+            }
+            updateTransform();
+        });
+
+        // Close QR modal on click
+        modal.addEventListener('click', () => {
+            modal.style.display = 'none';
+        });
+
+        // Update transform
+        function updateTransform() {
+            image.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale}) rotate(${rotation}deg)`;
+            zoomLevel.textContent = `${Math.round(scale * 100)}%`;
+            updateMiniMap();
+            
+            // Save view state in URL
+            const state = {
+                x: translateX,
+                y: translateY,
+                s: scale,
+                r: rotation
+            };
+            const params = new URLSearchParams(state);
+            history.replaceState(null, '', `?${params.toString()}`);
+        }
+
+        // Update mini-map
+        function updateMiniMap() {
+            if (miniMap.style.display === 'none') return;
+
+            const imageRect = image.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+            const miniMapRect = miniMap.getBoundingClientRect();
+
+            const scaleX = miniMapRect.width / imageRect.width;
+            const scaleY = miniMapRect.height / imageRect.height;
+            const viewportScale = Math.min(scaleX, scaleY);
+
+            const viewportWidth = containerRect.width * viewportScale / scale;
+            const viewportHeight = containerRect.height * viewportScale / scale;
+
+            const viewportX = (-translateX * viewportScale / scale) + (miniMapRect.width - viewportWidth) / 2;
+            const viewportY = (-translateY * viewportScale / scale) + (miniMapRect.height - viewportHeight) / 2;
+
+            viewportIndicator.style.width = `${viewportWidth}px`;
+            viewportIndicator.style.height = `${viewportHeight}px`;
+            viewportIndicator.style.left = `${viewportX}px`;
+            viewportIndicator.style.top = `${viewportY}px`;
+        }
+
+        // Reset view
+        function resetView() {
+            scale = 1;
+            translateX = 0;
+            translateY = 0;
+            rotation = 0;
+            updateTransform();
+        }
+
+        // Load view state from URL
+        window.addEventListener('load', () => {
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('x')) translateX = parseFloat(params.get('x'));
+            if (params.has('y')) translateY = parseFloat(params.get('y'));
+            if (params.has('s')) scale = parseFloat(params.get('s'));
+            if (params.has('r')) rotation = parseFloat(params.get('r'));
+            updateTransform();
+        });
+
+        // Handle window resize
+        window.addEventListener('resize', updateMiniMap);
+    </script>
+</body>
+</html>
